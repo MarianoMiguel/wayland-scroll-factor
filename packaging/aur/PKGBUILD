@@ -1,0 +1,41 @@
+# Maintainer: Daniel Grasso
+
+pkgname=wayland-scroll-factor-git
+pkgver=0.0.0
+pkgrel=1
+pkgdesc='Touchpad scroll and pinch tuning for Wayland (GNOME)'
+arch=('x86_64')
+url='https://github.com/TheErasedChild/wayland-scroll-factor'
+license=('MIT')
+depends=('gtk4' 'libadwaita' 'python' 'python-gobject')
+makedepends=('git' 'meson' 'ninja' 'pkgconf' 'gcc')
+optdepends=('libinput-tools: for wsf doctor diagnostics')
+provides=('wayland-scroll-factor')
+conflicts=('wayland-scroll-factor')
+install=wayland-scroll-factor.install
+source=('git+https://github.com/TheErasedChild/wayland-scroll-factor.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  local ver
+  ver=$(git describe --long --tags --abbrev=7 2>/dev/null)
+  if [[ -n "$ver" ]]; then
+    echo "$ver" | sed 's/^v//; s/-/./g'
+  else
+    printf "0.0.0.r%s.g%s" \
+      "$(git rev-list --count HEAD)" \
+      "$(git rev-parse --short HEAD)"
+  fi
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  meson setup build --prefix=/usr --buildtype=release
+  ninja -C build
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  DESTDIR="$pkgdir" meson install -C build
+}
