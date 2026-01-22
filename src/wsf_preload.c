@@ -142,7 +142,7 @@ static void wsf_init_internal(void) {
 	wsf_scroll_horizontal_factor = factors.scroll_horizontal;
 	wsf_pinch_zoom_factor = factors.pinch_zoom;
 	wsf_pinch_rotate_factor = factors.pinch_rotate;
-	wsf_active = wsf_proc_is_target("gnome-shell");
+	wsf_active = wsf_proc_is_target("niri");
 	wsf_real_scroll_value =
 		(wsf_scroll_value_fn) wsf_load_symbol(
 			"libinput_event_pointer_get_scroll_value"

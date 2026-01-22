@@ -1,5 +1,7 @@
-# Wayland Scroll Factor (WSF)
+# Wayland Scroll Factor (WSF) — Niri Fork
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> **This is a fork of [daniel-g-carrasco/wayland-scroll-factor](https://github.com/daniel-g-carrasco/wayland-scroll-factor) adapted for the [niri](https://github.com/YaLTeR/niri) Wayland compositor.**
 
 <p align="center">
   <img src="data/icons/hicolor/512x512/apps/io.github.danielgrasso.WaylandScrollFactor.png"
@@ -8,7 +10,7 @@
 
 <p align="center">
   <b>Tune touchpad gesture feel on Wayland</b><br>
-  Predictable two‑finger scrolling (vertical + horizontal) and pinch zoom/rotate sensitivity on modern Linux desktops — starting with GNOME on Wayland.<br>
+  Predictable two‑finger scrolling (vertical + horizontal) and pinch zoom/rotate sensitivity for niri.<br>
   <i>Status: testing</i>
 </p>
 
@@ -22,18 +24,18 @@
 - **Pinch‑to‑zoom** sensitivity
 - **Pinch rotate** sensitivity
 
-WSF is intentionally narrow in scope and designed to be **safe, reversible, and practical** on modern GNOME Wayland setups (tested primarily on Arch + GNOME).
+WSF is intentionally narrow in scope and designed to be **safe, reversible, and practical** (tested on Arch + niri).
 
 ---
 
 ## Why does this exist?
 
-On Wayland, touchpad gesture behavior is typically handled by the compositor (e.g. GNOME Shell/Mutter). Many users run into one or more of these issues depending on hardware and distro defaults:
+On Wayland, touchpad gesture behavior is typically handled by the compositor. Many users run into one or more of these issues depending on hardware and distro defaults:
 
 - Scroll feels **too fast/too slow** and there is **no simple system slider**.
 - Horizontal scroll behavior is inconsistent across apps.
 - Pinch‑to‑zoom in maps/photos can feel **hard to control**.
-- Older hacks/workarounds can become **fragile** across GNOME/libinput updates.
+- Older hacks/workarounds can become **fragile** across compositor/libinput updates.
 
 WSF exists to provide a **user‑level**, easy‑to‑roll‑back approach until upstream environments expose consistent, user‑facing controls.
 
@@ -52,32 +54,12 @@ WSF ships two components:
 ### Safety design choices
 
 - **Per‑user only**: avoids `/etc/ld.so.preload`. Config is under `~/.config`.
-- **Process guard rail**: the preload library is a no‑op unless the process is `gnome-shell` (so unrelated apps are not affected).
+- **Process guard rail**: the preload library is a no‑op unless the process is `niri` (so unrelated apps are not affected).
 - **Touchpad‑only scroll scaling**: scroll scaling is applied only to finger/continuous sources, preserving mouse wheel behavior.
 - **Narrow scope**: focuses on scroll + pinch sensitivity to reduce breakage across updates.
 - **Diagnostics first**: `wsf doctor` reports symbol availability, active factors, and environment status.
 
-> Enabling/disabling requires **logout/login** (or session restart) because environment changes must be picked up by GNOME Shell.
-
----
-
-## Quick install (one‑shot)
-
-This script attempts to:
-1) install dependencies via your package manager,
-2) clone the repo,
-3) run the user install.
-
-It detects your distro (Arch, Ubuntu/Debian, Fedora) and runs the appropriate package manager commands. If dependency install fails, you can rerun the script after installing packages manually.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/daniel-g-carrasco/wayland-scroll-factor/main/scripts/bootstrap.sh | bash
-```
-
-**Notes**
-- Requires `sudo` only for dependency installation.
-- GUI requires **libadwaita ≥ 1.4** (Ubuntu 22.04 and Debian 12 will install, but the GUI won’t run; the CLI still works).
-- As with any `curl | bash` install: feel free to inspect the script first.
+> Enabling/disabling requires **logout/login** (or session restart) because environment changes must be picked up by niri.
 
 ---
 
@@ -89,11 +71,18 @@ Set a factor (example: slightly slower scroll):
 wsf set 0.35
 ```
 
-Enable for your session (**logout/login required**):
+Enable for your session. Since niri runs as a systemd user service, create an override:
 
 ```bash
-wsf enable
+mkdir -p ~/.config/systemd/user/niri.service.d
+cat > ~/.config/systemd/user/niri.service.d/wsf-preload.conf << 'EOF'
+[Service]
+Environment="LD_PRELOAD=$HOME/.local/lib/wayland-scroll-factor/libwsf_preload.so"
+EOF
+systemctl --user daemon-reload
 ```
+
+Then **logout/login** for the changes to take effect.
 
 Run diagnostics:
 
@@ -136,9 +125,9 @@ meson install -C build
 
 ---
 
-## GUI (GNOME / libadwaita)
+## GUI (GTK4 / libadwaita)
 
-WSF includes a GNOME‑style **GTK4/libadwaita** control app that uses the `wsf` CLI under the hood.
+WSF includes a **GTK4/libadwaita** control app that uses the `wsf` CLI under the hood.
 
 - Run: `wsf-gui`
 - Reads values via `wsf get --json`
@@ -216,9 +205,7 @@ This installs system‑wide under `/usr`. For custom library locations, set `WSF
 
 ### Known working
 
-- **Arch Linux (rolling)** + GNOME (Wayland) — primary test target
-- **Ubuntu 24.04 LTS** — CLI + GUI compatible
-- **Fedora (recent)** — CLI + GUI compatible
+- **Arch Linux (rolling)** + niri — primary test target
 
 ### CLI only (GUI too old)
 
@@ -229,9 +216,9 @@ This installs system‑wide under `/usr`. For custom library locations, set `WSF
 
 ## Limitations
 
-- Environment changes typically require **logout/login** to affect GNOME Shell.
+- Environment changes typically require **logout/login** to affect niri.
 - WSF intentionally adjusts only a small subset of gesture feel controls.
-- Support is focused on GNOME first; broader compositor support is planned.
+- This fork targets niri only. For GNOME support, see the [upstream project](https://github.com/daniel-g-carrasco/wayland-scroll-factor).
 
 ---
 
@@ -239,11 +226,19 @@ This installs system‑wide under `/usr`. For custom library locations, set `WSF
 
 Issues and PRs are welcome. When reporting a problem, please include:
 
-- distro + compositor + session type (Wayland/X11)
-- GNOME Shell version (if applicable)
+- distro + niri version
 - libinput version
 - what you expected vs what happened
 - output of `wsf doctor`
+
+## Upstream
+
+This fork tracks [daniel-g-carrasco/wayland-scroll-factor](https://github.com/daniel-g-carrasco/wayland-scroll-factor). To sync with upstream:
+
+```bash
+git fetch upstream
+git merge upstream/main
+```
 
 ---
 
