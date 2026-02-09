@@ -56,6 +56,7 @@ WSF ships two components:
 - **Per‑user only**: avoids `/etc/ld.so.preload`. Config is under `~/.config`.
 - **Process guard rail**: the preload library is a no‑op unless the process is `niri` (so unrelated apps are not affected).
 - **Touchpad‑only scroll scaling**: scroll scaling is applied only to finger/continuous sources, preserving mouse wheel behavior.
+- **Velocity‑aware scroll curve**: low-speed motion is more precise; faster swipes accelerate more (Mac-like behavior).
 - **Narrow scope**: focuses on scroll + pinch sensitivity to reduce breakage across updates.
 - **Diagnostics first**: `wsf doctor` reports symbol availability, active factors, and environment status.
 

@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <math.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -36,6 +37,23 @@ typedef wsf_axis_source_t (*wsf_axis_source_fn)(struct libinput_event_pointer *)
 typedef double (*wsf_gesture_value_fn)(struct libinput_event_gesture *);
 typedef struct libinput_event *(*wsf_base_event_fn)(struct libinput_event_pointer *);
 typedef wsf_event_type_t (*wsf_event_type_fn)(struct libinput_event *);
+typedef uint64_t (*wsf_pointer_time_usec_fn)(struct libinput_event_pointer *);
+typedef uint32_t (*wsf_pointer_time_fn)(struct libinput_event_pointer *);
+
+#define WSF_SCROLL_CURVE_MIN_MULTIPLIER 0.70
+#define WSF_SCROLL_CURVE_MAX_MULTIPLIER 1.65
+#define WSF_SCROLL_CURVE_VELOCITY_LOW 80.0
+#define WSF_SCROLL_CURVE_VELOCITY_HIGH 2000.0
+#define WSF_SCROLL_CURVE_SMOOTHING 0.35
+#define WSF_SCROLL_CURVE_RESET_GAP_US 120000ULL
+#define WSF_SCROLL_CURVE_FALLBACK_DT_US 8000.0
+
+struct wsf_scroll_axis_state {
+	double velocity;
+	uint64_t last_time_us;
+	bool has_velocity;
+	bool has_last_time;
+};
 
 #if defined(WSF_HAVE_LIBINPUT_HEADERS) && defined(LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)
 #define WSF_AXIS_SCROLL_VERTICAL LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL
@@ -78,6 +96,8 @@ static wsf_gesture_value_fn wsf_real_gesture_scale = NULL;
 static wsf_gesture_value_fn wsf_real_gesture_angle_delta = NULL;
 static wsf_base_event_fn wsf_real_base_event = NULL;
 static wsf_event_type_fn wsf_real_event_type = NULL;
+static wsf_pointer_time_usec_fn wsf_real_pointer_time_usec = NULL;
+static wsf_pointer_time_fn wsf_real_pointer_time = NULL;
 
 static bool wsf_debug = false;
 static bool wsf_active = false;
@@ -93,6 +113,11 @@ static bool wsf_logged_missing_axis_value_discrete = false;
 static bool wsf_logged_missing_axis_source = false;
 static bool wsf_logged_missing_gesture_scale = false;
 static bool wsf_logged_missing_gesture_angle = false;
+static bool wsf_logged_missing_pointer_time = false;
+static bool wsf_logged_missing_pointer_time_usec = false;
+
+static struct wsf_scroll_axis_state wsf_vertical_scroll_state = {0};
+static struct wsf_scroll_axis_state wsf_horizontal_scroll_state = {0};
 
 static void wsf_debug_log(const char *fmt, ...) {
 	if (!wsf_debug) {
@@ -171,6 +196,14 @@ static void wsf_init_internal(void) {
 	wsf_real_event_type =
 		(wsf_event_type_fn) wsf_load_symbol(
 			"libinput_event_get_type"
+		);
+	wsf_real_pointer_time_usec =
+		(wsf_pointer_time_usec_fn) wsf_load_symbol(
+			"libinput_event_pointer_get_time_usec"
+		);
+	wsf_real_pointer_time =
+		(wsf_pointer_time_fn) wsf_load_symbol(
+			"libinput_event_pointer_get_time"
 		);
 	wsf_real_gesture_scale =
 		(wsf_gesture_value_fn) wsf_load_symbol(
@@ -265,12 +298,157 @@ static void wsf_ensure_init(void) {
 	}
 }
 
+static double wsf_clamp(double value, double min, double max) {
+	if (value < min) {
+		return min;
+	}
+	if (value > max) {
+		return max;
+	}
+	return value;
+}
+
 static double wsf_scroll_factor_for_axis(wsf_axis_t axis) {
 	if (axis == WSF_AXIS_SCROLL_HORIZONTAL) {
 		return wsf_scroll_horizontal_factor;
 	}
 
 	return wsf_scroll_vertical_factor;
+}
+
+static struct wsf_scroll_axis_state *wsf_scroll_state_for_axis(wsf_axis_t axis) {
+	if (axis == WSF_AXIS_SCROLL_HORIZONTAL) {
+		return &wsf_horizontal_scroll_state;
+	}
+
+	return &wsf_vertical_scroll_state;
+}
+
+static bool wsf_event_pointer_time_usec(
+	struct libinput_event_pointer *event,
+	uint64_t *out_time_us
+) {
+	uint64_t time_us = 0;
+
+	if (event == NULL || out_time_us == NULL) {
+		return false;
+	}
+
+	if (wsf_real_pointer_time_usec == NULL) {
+		wsf_real_pointer_time_usec =
+			(wsf_pointer_time_usec_fn) wsf_load_symbol(
+				"libinput_event_pointer_get_time_usec"
+			);
+	}
+	if (wsf_real_pointer_time_usec != NULL) {
+		time_us = wsf_real_pointer_time_usec(event);
+		if (time_us > 0) {
+			*out_time_us = time_us;
+			return true;
+		}
+		if (wsf_debug && !wsf_logged_missing_pointer_time_usec) {
+			wsf_debug_log(
+				"pointer_time_usec returned zero; falling back to ms timer"
+			);
+			wsf_logged_missing_pointer_time_usec = true;
+		}
+	}
+
+	if (wsf_real_pointer_time == NULL) {
+		wsf_real_pointer_time =
+			(wsf_pointer_time_fn) wsf_load_symbol(
+				"libinput_event_pointer_get_time"
+			);
+	}
+	if (wsf_real_pointer_time != NULL) {
+		uint32_t time_ms = wsf_real_pointer_time(event);
+		if (time_ms > 0) {
+			*out_time_us = (uint64_t) time_ms * 1000ULL;
+			return true;
+		}
+		if (wsf_debug && !wsf_logged_missing_pointer_time) {
+			wsf_debug_log("pointer_time returned zero");
+			wsf_logged_missing_pointer_time = true;
+		}
+	}
+
+	return false;
+}
+
+static double wsf_scroll_curve_multiplier(double velocity) {
+	double normalized = 0.0;
+
+	if (!isfinite(velocity) || velocity <= WSF_SCROLL_CURVE_VELOCITY_LOW) {
+		return WSF_SCROLL_CURVE_MIN_MULTIPLIER;
+	}
+	if (velocity >= WSF_SCROLL_CURVE_VELOCITY_HIGH) {
+		return WSF_SCROLL_CURVE_MAX_MULTIPLIER;
+	}
+
+	normalized =
+		(velocity - WSF_SCROLL_CURVE_VELOCITY_LOW) /
+		(WSF_SCROLL_CURVE_VELOCITY_HIGH - WSF_SCROLL_CURVE_VELOCITY_LOW);
+	normalized = wsf_clamp(normalized, 0.0, 1.0);
+	normalized = normalized * normalized * (3.0 - (2.0 * normalized));
+
+	return WSF_SCROLL_CURVE_MIN_MULTIPLIER +
+		(normalized * (WSF_SCROLL_CURVE_MAX_MULTIPLIER -
+			WSF_SCROLL_CURVE_MIN_MULTIPLIER));
+}
+
+static double wsf_scale_scroll_value(
+	struct libinput_event_pointer *event,
+	wsf_axis_t axis,
+	double value,
+	double base_factor
+) {
+	struct wsf_scroll_axis_state *state = wsf_scroll_state_for_axis(axis);
+	double instantaneous_velocity = 0.0;
+	double effective_factor = 1.0;
+	uint64_t time_us = 0;
+
+	if (!isfinite(value)) {
+		return value;
+	}
+	if (!isfinite(base_factor) || base_factor <= 0.0) {
+		return value * base_factor;
+	}
+	if (value == 0.0) {
+		return 0.0;
+	}
+
+	instantaneous_velocity = fabs(value) * (1000000.0 / WSF_SCROLL_CURVE_FALLBACK_DT_US);
+	if (wsf_event_pointer_time_usec(event, &time_us)) {
+		if (state->has_last_time && time_us > state->last_time_us) {
+			uint64_t delta_us = time_us - state->last_time_us;
+
+			if (delta_us > WSF_SCROLL_CURVE_RESET_GAP_US) {
+				state->has_velocity = false;
+			} else if (delta_us > 0) {
+				instantaneous_velocity =
+					fabs(value) * (1000000.0 / (double) delta_us);
+			}
+		}
+
+		state->last_time_us = time_us;
+		state->has_last_time = true;
+	}
+
+	if (!isfinite(instantaneous_velocity)) {
+		instantaneous_velocity = 0.0;
+	}
+
+	if (!state->has_velocity) {
+		state->velocity = instantaneous_velocity;
+		state->has_velocity = true;
+	} else {
+		state->velocity =
+			state->velocity +
+			((instantaneous_velocity - state->velocity) * WSF_SCROLL_CURVE_SMOOTHING);
+	}
+
+	effective_factor = base_factor * wsf_scroll_curve_multiplier(state->velocity);
+	return value * effective_factor;
 }
 
 static double wsf_scale_pinch_zoom(double scale) {
@@ -384,7 +562,7 @@ double libinput_event_pointer_get_axis_value(
 		return value;
 	}
 
-	return value * factor;
+	return wsf_scale_scroll_value(event, axis, value, factor);
 }
 
 double libinput_event_pointer_get_axis_value_discrete(
@@ -417,7 +595,7 @@ double libinput_event_pointer_get_axis_value_discrete(
 		return value;
 	}
 
-	return value * factor;
+	return wsf_scale_scroll_value(event, axis, value, factor);
 }
 
 double libinput_event_pointer_get_scroll_value(
@@ -450,7 +628,7 @@ double libinput_event_pointer_get_scroll_value(
 		return value;
 	}
 
-	return value * factor;
+	return wsf_scale_scroll_value(event, axis, value, factor);
 }
 
 double libinput_event_pointer_get_scroll_value_v120(
@@ -483,7 +661,7 @@ double libinput_event_pointer_get_scroll_value_v120(
 		return value;
 	}
 
-	return value * factor;
+	return wsf_scale_scroll_value(event, axis, value, factor);
 }
 
 double libinput_event_gesture_get_scale(struct libinput_event_gesture *event) {

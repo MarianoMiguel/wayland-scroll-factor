@@ -70,6 +70,8 @@ Notes:
 - `factor` is the legacy setting; it applies to scroll axes when per-axis keys
   are not set.
 - Per-axis keys override `factor`.
+- Scroll scaling is velocity-aware (nonlinear): slower motion gets finer control,
+  faster motion gains acceleration.
 - Pinch zoom scaling uses: `pow(scale, pinch_zoom_factor)`.
 
 Environment overrides:
