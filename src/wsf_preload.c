@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include <dlfcn.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -272,6 +273,21 @@ static double wsf_scroll_factor_for_axis(wsf_axis_t axis) {
 	return wsf_scroll_vertical_factor;
 }
 
+static double wsf_scale_pinch_zoom(double scale) {
+	double scaled = 1.0;
+
+	if (!isfinite(scale) || scale <= 0.0) {
+		return scale;
+	}
+
+	scaled = pow(scale, wsf_pinch_zoom_factor);
+	if (!isfinite(scaled) || scaled <= 0.0) {
+		return scale;
+	}
+
+	return scaled;
+}
+
 static bool wsf_should_scale_scroll(
 	struct libinput_event_pointer *event,
 	double factor
@@ -495,7 +511,7 @@ double libinput_event_gesture_get_scale(struct libinput_event_gesture *event) {
 		return scale;
 	}
 
-	return 1.0 + (scale - 1.0) * wsf_pinch_zoom_factor;
+	return wsf_scale_pinch_zoom(scale);
 }
 
 double libinput_event_gesture_get_angle_delta(struct libinput_event_gesture *event) {

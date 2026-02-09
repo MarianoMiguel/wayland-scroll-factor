@@ -4,5 +4,5 @@ shared_library(
   name_prefix: 'lib',
   install: true,
   install_dir: wsf_libdir,
-  dependencies: [dl_dep]
+  dependencies: [dl_dep, m_dep]
 )

@@ -70,7 +70,7 @@ Notes:
 - `factor` is the legacy setting; it applies to scroll axes when per-axis keys
   are not set.
 - Per-axis keys override `factor`.
-- Pinch zoom scaling uses: `1.0 + (scale - 1.0) * pinch_zoom_factor`.
+- Pinch zoom scaling uses: `pow(scale, pinch_zoom_factor)`.
 
 Environment overrides:
 
